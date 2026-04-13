@@ -1,0 +1,1646 @@
+openapi: 3.1.0
+info:
+  title: Intelligence Cloud API
+  version: 1.0.0
+  description: |
+    Backend API for the Intelligence Cloud platform. This document is the
+    **single source of truth** for the Intelligence Cloud HTTP contract and
+    consolidates the operations that previously lived in per-feature spec
+    folders under `specs/*/contracts/openapi.yaml`.
+
+    > **Maintenance contract:** this file MUST be kept up to date. Any PR that
+    > adds, removes, or changes a production HTTP route MUST update
+    > `backend/docs/api/openapi.yaml` in the same change. See
+    > `backend/docs/api/README.md` for the full source-of-truth policy.
+
+    ## Authentication
+
+    Authentication is performed by Azure Active Directory. In production,
+    Azure API Management (APIM) validates JWT bearer tokens at the edge and
+    forwards the validated identity to the backend via the `X-External-Id`
+    header (Azure AD object ID). The backend resolves that identity to the
+    appropriate user record (`tresic_admins`, `reseller_users`, or
+    `company_users`).
+
+    For local development the backend can run with mock auth enabled, in
+    which case any bearer token is accepted.
+
+    ## API versioning
+
+    All routes are served under the `/api/v1` prefix on the backend. Server
+    URLs in this document do **not** include the prefix; paths include it
+    explicitly so the same document can be served behind APIM, the bare
+    backend, or in local environments.
+
+  contact:
+    name: Intelligence Cloud Platform Team
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://api.intelligence.cloud
+    description: |
+      Production via Azure API Management (APIM). Provisional — confirm exact
+      hostname and any path rewrites with the platform team. See
+      `backend/docs/api/README.md`.
+  - url: https://api.staging.intelligence.cloud
+    description: Staging via Azure API Management (APIM). Provisional.
+  - url: https://api.intelligence.tresic.com
+    description: |
+      Legacy direct backend hostname previously documented in this file.
+      Retained for transitional reference.
+  - url: http://localhost:8080
+    description: Local development (bare backend, no APIM)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Authentication
+    description: Login and current-user profile endpoints
+  - name: User Profile
+    description: Authenticated user profile and self-service settings
+  - name: Avatar
+    description: Avatar upload and management for the authenticated user
+  - name: Notification Preferences
+    description: Notification preference management for the authenticated user
+  - name: Daily Recap Preferences
+    description: Daily recap email preference management
+  - name: Resellers
+    description: Reseller account management (Tresic Admin scope)
+  - name: Audit Logs
+    description: Audit log retrieval for compliance and monitoring
+  - name: Connectors
+    description: Connector listing for companies and locations
+  - name: Company Users
+    description: Company user management
+  - name: Products
+    description: Product catalog reference data
+
+paths:
+  # ---------------------------------------------------------------------------
+  # Authentication
+  # ---------------------------------------------------------------------------
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      summary: Authenticate Tresic admin and obtain tokens
+      description: |
+        Validates admin credentials against Azure AD using the ROPC flow,
+        looks up the user in `tresic_admins`, caches user context in Redis,
+        and returns tokens with the admin profile and granted scopes.
+
+        Reseller and Company user authentication is performed by APIM and is
+        not exposed via this login endpoint.
+      tags: [Authentication]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            examples:
+              valid_login:
+                summary: Valid login request
+                value:
+                  email: admin@tresic.com
+                  password: SecurePassword123!
+      responses:
+        '200':
+          description: Successful authentication
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: Invalid request (missing or malformed email/password)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthErrorResponse'
+        '401':
+          description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthErrorResponse'
+        '404':
+          description: User not found in `tresic_admins`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthErrorResponse'
+        '503':
+          description: Authentication service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthErrorResponse'
+
+  # ---------------------------------------------------------------------------
+  # User Profile (current authenticated user)
+  # ---------------------------------------------------------------------------
+  /api/v1/me:
+    get:
+      summary: Get current user profile
+      description: |
+        Returns the authenticated user's profile information. The user is
+        identified by the `X-External-Id` header which is set by APIM after
+        JWT validation.
+
+        This endpoint resolves the user across different user types:
+        - `tresic_admin`: Platform administrators
+        - `reseller_user`: Reseller organization users
+        - `company_user`: Company/tenant users
+
+        For `company_user`, the response also includes `department` and
+        `avatar_url`.
+      operationId: getMe
+      tags: [User Profile, Authentication]
+      responses:
+        '200':
+          description: User profile retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileResponse'
+              examples:
+                tresicAdmin:
+                  summary: Tresic Admin user
+                  value:
+                    data:
+                      user_type: tresic_admin
+                      id: "550e8400-e29b-41d4-a716-446655440000"
+                      email: "admin@tresic.com"
+                      first_name: "John"
+                      last_name: "Doe"
+                      display_name: "John Doe"
+                      role: "super_admin"
+                      status: "active"
+                      scopes:
+                        - "admin:*"
+                        - "resellers:read"
+                        - "resellers:write"
+                resellerUser:
+                  summary: Reseller user with reseller info
+                  value:
+                    data:
+                      user_type: reseller_user
+                      id: "660e8400-e29b-41d4-a716-446655440001"
+                      email: "user@reseller.com"
+                      first_name: "Jane"
+                      last_name: "Smith"
+                      display_name: "Jane Smith"
+                      role: "manager"
+                      status: "active"
+                      scopes:
+                        - "users:read"
+                        - "users:write"
+                      reseller_id: "770e8400-e29b-41d4-a716-446655440002"
+                      reseller_name: "Acme Corp"
+                companyUser:
+                  summary: Company user with department and avatar
+                  value:
+                    data:
+                      user_type: company_user
+                      id: "880e8400-e29b-41d4-a716-446655440003"
+                      email: "user@company.com"
+                      first_name: "Pat"
+                      last_name: "Lee"
+                      display_name: "Pat Lee"
+                      role: "frontline_user"
+                      status: "active"
+                      scopes:
+                        - "calls:read"
+                      company_id: "990e8400-e29b-41d4-a716-446655440004"
+                      department: "Sales"
+                      avatar_url: "https://blob.example.com/avatars/pat.png"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Account not authorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                deactivated:
+                  value:
+                    error:
+                      code: "ACCOUNT_DEACTIVATED"
+                      message: "Account has been deactivated"
+                      request_id: "req_abc123xyz789"
+                notActivated:
+                  value:
+                    error:
+                      code: "ACCOUNT_NOT_ACTIVATED"
+                      message: "Account has not been activated yet"
+                      request_id: "req_abc123xyz789"
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ---------------------------------------------------------------------------
+  # Avatar
+  # ---------------------------------------------------------------------------
+  /api/v1/me/avatar/upload-url:
+    post:
+      summary: Generate avatar upload URL
+      description: |
+        Generates a pre-signed Azure Blob SAS URL for uploading a profile
+        photo. The SAS URL includes a max content-length constraint (5 MB)
+        and expires in 15 minutes. After PUT'ing the image to the SAS URL,
+        the client calls `PATCH /api/v1/me/avatar` to confirm and store the
+        asset URL.
+      operationId: createAvatarUploadURL
+      tags: [Avatar]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AvatarUploadURLRequest'
+      responses:
+        '200':
+          description: Upload URL generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvatarUploadURLResponse'
+        '400':
+          description: Invalid content type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/me/avatar:
+    patch:
+      summary: Confirm avatar upload
+      description: |
+        Confirms a previously generated SAS upload by storing the asset URL
+        on the user profile. Deletes any previous avatar blob.
+      operationId: confirmAvatar
+      tags: [Avatar]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AvatarConfirmRequest'
+      responses:
+        '200':
+          description: Avatar updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvatarResponse'
+        '400':
+          description: Invalid asset URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      summary: Remove profile photo
+      description: Deletes the user's avatar from blob storage and resets `avatar_url` to empty.
+      operationId: deleteAvatar
+      tags: [Avatar]
+      responses:
+        '204':
+          description: Avatar removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---------------------------------------------------------------------------
+  # Notification Preferences
+  # ---------------------------------------------------------------------------
+  /api/v1/me/notification-preferences:
+    get:
+      summary: Get notification preferences
+      description: |
+        Returns the authenticated user's notification preferences. If no
+        preferences exist, lazily creates a default record and returns it.
+      operationId: getNotificationPreferences
+      tags: [Notification Preferences]
+      responses:
+        '200':
+          description: Notification preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreferencesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      summary: Update notification preferences
+      description: Partially updates notification preferences. Omitted fields are unchanged.
+      operationId: patchNotificationPreferences
+      tags: [Notification Preferences]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchNotificationPreferencesRequest'
+      responses:
+        '200':
+          description: Updated notification preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreferencesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---------------------------------------------------------------------------
+  # Daily Recap Preferences
+  # ---------------------------------------------------------------------------
+  /api/v1/me/daily-recap-preferences:
+    get:
+      summary: Get daily recap preferences
+      description: |
+        Returns the authenticated user's daily recap preferences, sourced
+        from ACC user settings. If no ACC settings exist, lazily creates a
+        default record and returns its recap fields.
+      operationId: getDailyRecapPreferences
+      tags: [Daily Recap Preferences]
+      responses:
+        '200':
+          description: Daily recap preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyRecapPreferencesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      summary: Update daily recap preferences
+      description: |
+        Partially updates daily recap preferences. Updates the corresponding
+        fields on `acc_user_settings`.
+      operationId: patchDailyRecapPreferences
+      tags: [Daily Recap Preferences]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchDailyRecapPreferencesRequest'
+      responses:
+        '200':
+          description: Updated daily recap preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyRecapPreferencesResponse'
+        '400':
+          description: Validation error (invalid time, timezone, format)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---------------------------------------------------------------------------
+  # Resellers (Tresic Admin)
+  # ---------------------------------------------------------------------------
+  /api/v1/resellers:
+    post:
+      summary: Create reseller
+      description: Creates a new global reseller account.
+      operationId: createReseller
+      tags: [Resellers]
+      security:
+        - bearerAuth: [resellers:create]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateResellerRequest'
+      responses:
+        '201':
+          description: Reseller created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reseller'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    get:
+      summary: List resellers
+      description: Returns a paginated list of all resellers.
+      operationId: listResellers
+      tags: [Resellers]
+      security:
+        - bearerAuth: [resellers:read]
+      parameters:
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: search
+          in: query
+          description: Search by name or email (prefix match)
+          schema: { type: string }
+        - name: country
+          in: query
+          description: Filter by country
+          schema: { type: string }
+        - name: is_active
+          in: query
+          description: Filter by active status
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Paginated list of resellers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResellerListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/resellers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Reseller UUID
+        schema: { type: string, format: uuid }
+    get:
+      summary: Get reseller
+      description: Returns full details of a single reseller by ID.
+      operationId: getReseller
+      tags: [Resellers]
+      security:
+        - bearerAuth: [resellers:read]
+      responses:
+        '200':
+          description: Reseller details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reseller'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Update reseller (full)
+      description: Replaces all reseller fields with the provided values (full replacement).
+      operationId: updateReseller
+      tags: [Resellers]
+      security:
+        - bearerAuth: [resellers:update]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateResellerRequest'
+      responses:
+        '200':
+          description: Reseller updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reseller'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    patch:
+      summary: Update reseller (partial)
+      description: Updates only the provided reseller fields (partial update).
+      operationId: patchReseller
+      tags: [Resellers]
+      security:
+        - bearerAuth: [resellers:update]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchResellerRequest'
+      responses:
+        '200':
+          description: Reseller updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reseller'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/resellers/{id}/deactivate:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Reseller UUID
+        schema: { type: string, format: uuid }
+    post:
+      summary: Deactivate reseller
+      description: |
+        Deactivates a reseller. No deletion is allowed. The reseller will be
+        marked inactive and cannot log in. Timestamp and admin identity are
+        recorded for audit.
+      operationId: deactivateReseller
+      tags: [Resellers]
+      security:
+        - bearerAuth: [resellers:deactivate]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeactivateResellerRequest'
+      responses:
+        '200':
+          description: Reseller deactivated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reseller'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/resellers/{id}/reactivate:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Reseller UUID
+        schema: { type: string, format: uuid }
+    post:
+      summary: Reactivate reseller
+      description: Reactivates a previously deactivated reseller. Restores access for the reseller's users.
+      operationId: reactivateReseller
+      tags: [Resellers]
+      security:
+        - bearerAuth: [resellers:deactivate]
+      responses:
+        '200':
+          description: Reseller reactivated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reseller'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # ---------------------------------------------------------------------------
+  # Audit Logs
+  # ---------------------------------------------------------------------------
+  /api/v1/resellers/{resellerId}/audit-logs:
+    get:
+      summary: List audit logs for a reseller
+      description: |
+        Returns a paginated list of audit log entries for the specified
+        reseller.
+
+        **Authorization**
+        - Tresic Admin: can view any reseller's audit logs.
+        - Reseller Admin: can view only their own reseller's audit logs.
+
+        Required scope: `audit:read`.
+      operationId: listResellerAuditLogs
+      tags: [Audit Logs]
+      security:
+        - bearerAuth: [audit:read]
+      parameters:
+        - name: resellerId
+          in: path
+          required: true
+          description: UUID of the reseller
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: action
+          in: query
+          required: false
+          description: Filter by action type
+          schema:
+            type: string
+            enum:
+              - reseller.deactivated
+              - reseller.reactivated
+              - reseller.updated
+              - user.created
+              - user.updated
+              - user.deactivated
+              - user.reactivated
+              - invitation.sent
+              - invitation.accepted
+              - invitation.expired
+              - company.created
+              - company.updated
+              - company.deactivated
+              - auth.login
+              - auth.login_failed
+              - auth.password_changed
+              - product.configured
+              - connector.configured
+        - name: start_date
+          in: query
+          required: false
+          description: Filter by `performed_at >= date` (ISO8601)
+          schema: { type: string, format: date-time }
+        - name: end_date
+          in: query
+          required: false
+          description: Filter by `performed_at <= date` (ISO8601)
+          schema: { type: string, format: date-time }
+        - name: actor_id
+          in: query
+          required: false
+          description: Filter by the user who performed the action
+          schema: { type: string, format: uuid }
+        - name: search
+          in: query
+          required: false
+          description: Search in audit log details (case-insensitive, max 200 chars)
+          schema: { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: Successful response with paginated audit logs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Reseller not found (also returned for cross-reseller access by ResellerAdmin)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ---------------------------------------------------------------------------
+  # Connectors
+  # ---------------------------------------------------------------------------
+  /api/v1/locations/{locationId}/connectors:
+    get:
+      operationId: listLocationConnectors
+      summary: List connectors for a location
+      description: |
+        Returns all connectors for the specified location with cursor-based
+        pagination, search-by-name, and status filtering. Returns summary
+        fields only (no connector configuration).
+      tags: [Connectors]
+      security:
+        - bearerAuth: [connectors:read]
+      parameters:
+        - name: locationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Location UUID
+        - name: search
+          in: query
+          required: false
+          schema: { type: string }
+          description: Case-insensitive partial match on connector name. Empty string treated as no filter.
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [active, inactive, error]
+          description: Filter by connector status. Returns 400 if invalid value provided.
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: Paginated list of connectors for the location.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LocationConnectorListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/companies/{companyId}/connectors:
+    get:
+      operationId: listCompanyConnectors
+      summary: List connectors across all locations for a company
+      description: |
+        Aggregates connectors across all locations belonging to the specified
+        company. Each item includes the connector's location name. Includes
+        an `errors` summary listing all connectors in error state across the
+        entire company, regardless of the current page. Returns summary
+        fields only (no connector configuration).
+      tags: [Connectors]
+      security:
+        - bearerAuth: [connectors:read]
+      parameters:
+        - name: companyId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Company UUID
+        - name: search
+          in: query
+          required: false
+          schema: { type: string }
+          description: Case-insensitive partial match on connector name. Empty string treated as no filter.
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [active, inactive, error]
+          description: Filter by connector status. Returns 400 if invalid value provided.
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [netsapiens, ooma, google_reviews, approved_contact]
+          description: Filter by connector type. Returns 400 if invalid value provided.
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: Paginated list of connectors across all company locations with error summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyConnectorListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ---------------------------------------------------------------------------
+  # Company Users
+  # ---------------------------------------------------------------------------
+  /api/v1/companies/{companyId}/users/{userId}:
+    patch:
+      summary: Update company user
+      description: |
+        Partially updates a company user. Includes optional `department` field
+        for the company-user organizational department. Requires
+        `company_users:update` scope.
+      operationId: patchCompanyUser
+      tags: [Company Users]
+      security:
+        - bearerAuth: [company_users:update]
+      parameters:
+        - name: companyId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCompanyUserRequest'
+      responses:
+        '200':
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyUserResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ---------------------------------------------------------------------------
+  # Products (reference data)
+  # ---------------------------------------------------------------------------
+  /api/v1/products:
+    get:
+      summary: List products
+      description: Returns all available products for assignment to resellers.
+      operationId: listProducts
+      tags: [Products]
+      security:
+        - bearerAuth: [products:read]
+      responses:
+        '200':
+          description: List of available products
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductListResponse'
+              example:
+                data:
+                  - key: "insights-hub"
+                    name: "Insights Hub"
+                  - key: "after-call-copilot"
+                    name: "After Call Co-Pilot"
+                  - key: "first-alert-copilot"
+                    name: "First Alert Co-Pilot"
+                  - key: "developer-studio"
+                    name: "Developer Studio"
+                  - key: "platform-tools-upload-recording"
+                    name: "Platform Tools - Upload Recording"
+                  - key: "platform-tools-upload-vcons"
+                    name: "Platform Tools - Upload vCons"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+components:
+  # ===========================================================================
+  # Security Schemes
+  # ===========================================================================
+  securitySchemes:
+    bearerAuth:
+      type: oauth2
+      description: |
+        Azure AD JWT bearer token. In production, tokens are validated by
+        Azure API Management (APIM), which forwards the validated identity
+        via the `X-External-Id` header. For local development with mock auth
+        enabled, any bearer token is accepted.
+
+        The `clientCredentials` flow declared below is for documentation of
+        scopes only — the actual authorization URL is tenant-specific (Azure
+        AD) and is configured at the APIM layer. Treat the listed scopes as
+        the authoritative set of permissions issued to user/service tokens.
+      flows:
+        clientCredentials:
+          tokenUrl: https://login.microsoftonline.com/common/oauth2/v2.0/token
+          scopes:
+            'admin:*': Tresic Admin platform-wide privileges
+            'admin:read': Read platform admin resources
+            'admin:write': Write platform admin resources
+            'platform:*': Platform-wide super-admin privileges
+            'resellers:create': Create reseller accounts
+            'resellers:read': Read reseller accounts
+            'resellers:update': Update reseller accounts
+            'resellers:deactivate': Deactivate or reactivate reseller accounts
+            'audit:read': Read audit logs
+            'connectors:read': Read connector listings
+            'company_users:update': Update company users
+            'products:read': Read product catalog
+
+  # ===========================================================================
+  # Reusable Parameters
+  # ===========================================================================
+  parameters:
+    CursorParam:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque pagination cursor returned by the previous page's response. Returns 400 if malformed.
+      schema: { type: string }
+    LimitParam:
+      name: limit
+      in: query
+      required: false
+      description: Number of results per page (default 20, max 100). Clamped to 100 if exceeded.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+  # ===========================================================================
+  # Reusable Responses
+  # ===========================================================================
+  responses:
+    BadRequest:
+      description: Invalid request (malformed input, query parameter validation, etc.)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Missing or invalid authentication
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: "UNAUTHORIZED"
+              message: "Authentication required"
+              request_id: "req_abc123xyz789"
+    Forbidden:
+      description: Authenticated but lacking the required scope or organizational access.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: "FORBIDDEN"
+              message: "Insufficient permissions for this operation"
+              request_id: "req_abc123xyz789"
+    NotFound:
+      description: Resource not found (or not accessible to the caller; org-scoped).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Resource conflict (e.g. duplicate name).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationError:
+      description: Request body validation error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: "INTERNAL_ERROR"
+              message: "An internal error occurred"
+              request_id: "req_abc123xyz789"
+
+  # ===========================================================================
+  # Schemas
+  # ===========================================================================
+  schemas:
+
+    # -- Standard error envelope -------------------------------------------
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/Error'
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code
+          example: "USER_NOT_FOUND"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "User not found in any user table"
+        request_id:
+          type: string
+          description: Unique request ID for debugging (when available)
+          example: "req_abc123xyz789"
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+          description: Additional error details (typically for validation errors)
+
+    ErrorDetail:
+      type: object
+      properties:
+        field:
+          type: string
+          description: Field that caused the error
+        code:
+          type: string
+          description: Specific error code for this field
+        message:
+          type: string
+          description: Human-readable error message for this field
+
+    # -- OAuth-style error envelope (login endpoint only) ------------------
+    OAuthErrorResponse:
+      type: object
+      required: [error, error_description]
+      description: |
+        OAuth-style error envelope used by `/api/v1/auth/login`. All other
+        endpoints use the standard `ErrorResponse` envelope. This divergence
+        is intentional to match OAuth 2.0 conventions on the login endpoint.
+      properties:
+        error:
+          type: string
+          description: OAuth error code
+          enum:
+            - invalid_request
+            - invalid_credentials
+            - account_deactivated
+            - account_not_activated
+            - token_validation_failed
+            - user_not_found
+            - authentication_service_unavailable
+        error_description:
+          type: string
+          description: Human-readable error description
+
+    # -- Login -------------------------------------------------------------
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        password:
+          type: string
+          format: password
+          minLength: 1
+          maxLength: 256
+
+    LoginResponse:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in, user]
+      properties:
+        access_token:
+          type: string
+          description: Azure AD access token (JWT)
+        refresh_token:
+          type: string
+          description: Azure AD refresh token
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          description: Token expiration time in seconds
+          example: 3600
+        user:
+          $ref: '#/components/schemas/UserProfile'
+
+    # -- User Profile ------------------------------------------------------
+    UserProfileResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/UserProfile'
+
+    UserProfile:
+      type: object
+      required:
+        - user_type
+        - id
+        - email
+        - first_name
+        - last_name
+        - display_name
+        - role
+        - status
+        - scopes
+      properties:
+        user_type:
+          type: string
+          description: The type of user account
+          enum: [tresic_admin, reseller_user, company_user]
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+        last_name:
+          type: string
+        display_name:
+          type: string
+        role:
+          type: string
+          description: Role within the user's organization (e.g. `super_admin`, `customer_admin`).
+        status:
+          type: string
+          enum: [invited, active, deactivated]
+        scopes:
+          type: array
+          items: { type: string }
+          description: Permission scopes granted to the user
+        reseller_id:
+          type: string
+          format: uuid
+          description: Reseller ID (only for `reseller_user`)
+        reseller_name:
+          type: string
+          description: Reseller name (only for `reseller_user`)
+        company_id:
+          type: string
+          format: uuid
+          description: Company ID (only for `company_user`)
+        department:
+          type: string
+          description: Free-text organizational department (only for `company_user`)
+        avatar_url:
+          type: string
+          description: Public URL of the user's avatar (only for `company_user`)
+
+    # -- Avatar ------------------------------------------------------------
+    AvatarUploadURLRequest:
+      type: object
+      required: [content_type]
+      properties:
+        content_type:
+          type: string
+          enum: [image/png, image/jpeg]
+          description: MIME type of the image to upload
+
+    AvatarUploadURLResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [upload_url, asset_url, expires_at]
+          properties:
+            upload_url:
+              type: string
+              description: Pre-signed SAS URL for PUT upload (expires in 15 minutes)
+            asset_url:
+              type: string
+              description: Public URL to store on the user profile after upload
+            expires_at:
+              type: string
+              format: date-time
+              description: SAS URL expiration time
+
+    AvatarConfirmRequest:
+      type: object
+      required: [asset_url]
+      properties:
+        asset_url:
+          type: string
+          description: The `asset_url` returned from the upload-url endpoint
+
+    AvatarResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [avatar_url]
+          properties:
+            avatar_url:
+              type: string
+
+    # -- Notification Preferences ------------------------------------------
+    NotificationPreferencesResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/NotificationPreferences'
+
+    NotificationPreferences:
+      type: object
+      properties:
+        email_notifications: { type: boolean }
+        push_notifications: { type: boolean }
+        daily_recap_email: { type: boolean }
+        task_reminders: { type: boolean }
+        missed_call_alerts: { type: boolean }
+
+    PatchNotificationPreferencesRequest:
+      allOf:
+        - $ref: '#/components/schemas/NotificationPreferences'
+        - description: All fields optional; only provided fields are updated.
+
+    # -- Daily Recap Preferences -------------------------------------------
+    DailyRecapPreferencesResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/DailyRecapPreferences'
+
+    DailyRecapPreferences:
+      type: object
+      properties:
+        send_time:
+          type: string
+          pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+          example: '08:00'
+          description: Send time in `HH:MM` 24-hour format
+        date_format:
+          type: string
+          enum: ['mm/dd/yyyy', 'dd/mm/yyyy', 'yyyy-mm-dd']
+        time_format:
+          type: string
+          enum: ['12h', '24h']
+        timezone:
+          type: string
+          example: 'America/Chicago'
+          description: IANA timezone identifier
+
+    PatchDailyRecapPreferencesRequest:
+      allOf:
+        - $ref: '#/components/schemas/DailyRecapPreferences'
+        - description: All fields optional; only provided fields are updated.
+
+    # -- Resellers ---------------------------------------------------------
+    Reseller:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        reseller_name: { type: string }
+        primary_contact_name: { type: string }
+        primary_contact_email: { type: string, format: email }
+        primary_contact_phone: { type: string }
+        company_website: { type: string, format: uri }
+        street: { type: string }
+        city: { type: string }
+        state: { type: string }
+        zipcode: { type: string }
+        country: { type: string }
+        enabled_products:
+          type: array
+          items: { type: string }
+        enable_pii_redaction: { type: boolean }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateResellerRequest:
+      type: object
+      required:
+        - reseller_name
+        - primary_contact_name
+        - primary_contact_email
+        - primary_contact_phone
+      properties:
+        reseller_name:
+          type: string
+          minLength: 2
+          maxLength: 255
+          description: Globally unique reseller name
+        primary_contact_name:
+          type: string
+          minLength: 2
+          maxLength: 255
+        primary_contact_email:
+          type: string
+          format: email
+        primary_contact_phone:
+          type: string
+        company_website:
+          type: string
+          format: uri
+        street:
+          type: string
+          maxLength: 255
+        city:
+          type: string
+          maxLength: 100
+        state:
+          type: string
+          maxLength: 100
+        zipcode:
+          type: string
+          maxLength: 20
+        country:
+          type: string
+          maxLength: 100
+        enabled_products:
+          type: array
+          items: { type: string }
+          description: Product keys to enable
+        enable_pii_redaction:
+          type: boolean
+          default: false
+
+    UpdateResellerRequest:
+      allOf:
+        - $ref: '#/components/schemas/CreateResellerRequest'
+        - description: |
+            Full replacement (PUT). Same required fields as create; full
+            object is replaced.
+
+    PatchResellerRequest:
+      type: object
+      description: Partial update (PATCH). All fields optional.
+      properties:
+        reseller_name:
+          type: string
+          minLength: 2
+          maxLength: 255
+        primary_contact_name:
+          type: string
+          minLength: 2
+          maxLength: 255
+        primary_contact_email:
+          type: string
+          format: email
+        primary_contact_phone:
+          type: string
+        company_website:
+          type: string
+          format: uri
+        street:
+          type: string
+          maxLength: 255
+        city:
+          type: string
+          maxLength: 100
+        state:
+          type: string
+          maxLength: 100
+        zipcode:
+          type: string
+          maxLength: 20
+        country:
+          type: string
+          maxLength: 100
+        enabled_products:
+          type: array
+          items: { type: string }
+        enable_pii_redaction:
+          type: boolean
+
+    DeactivateResellerRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          description: Reason for deactivation (required for audit)
+
+    ResellerListResponse:
+      type: object
+      required: [data, has_more]
+      description: |
+        Reseller list uses a flat (legacy) pagination shape with `next_cursor`
+        and `has_more` at the top level. New endpoints SHOULD use the nested
+        `pagination` envelope (see `LocationConnectorListResponse`). This
+        divergence is documented in `backend/docs/api/README.md`.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Reseller'
+        next_cursor:
+          type: string
+          nullable: true
+          description: Cursor for next page (null if no more results)
+        has_more:
+          type: boolean
+
+    # -- Audit Logs --------------------------------------------------------
+    AuditLogEntry:
+      type: object
+      required: [id, timestamp, actor_id, actor_name, action, details]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier (UUIDv7)
+        timestamp:
+          type: string
+          format: date-time
+        actor_id:
+          type: string
+          format: uuid
+        actor_name:
+          type: string
+          description: Display name of the actor at time of action
+        action:
+          type: string
+          description: Action type identifier
+        details:
+          type: string
+          description: Human-readable description of what happened
+
+    AuditLogListResponse:
+      type: object
+      required: [data, has_more]
+      description: Flat pagination shape (see note on `ResellerListResponse`).
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLogEntry'
+        next_cursor:
+          type: string
+          nullable: true
+        has_more:
+          type: boolean
+
+    # -- Connectors --------------------------------------------------------
+    PaginationDTO:
+      type: object
+      required: [has_more]
+      properties:
+        next_cursor:
+          type: string
+          nullable: true
+        has_more:
+          type: boolean
+
+    LocationConnectorItem:
+      type: object
+      required: [id, name, type, type_display_name, status, status_display, status_message, last_synced_at, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, description: 'Connector display name.' }
+        type:
+          type: string
+          enum: [netsapiens, ooma, google_reviews, approved_contact]
+        type_display_name:
+          type: string
+        status:
+          type: string
+          enum: [active, inactive, error]
+        status_display:
+          type: string
+          enum: [connected, inactive, error]
+        status_message:
+          type: string
+          nullable: true
+          description: Error description when status is `error`. Null otherwise.
+        last_synced_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Last successful sync timestamp. Null if never synced.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CompanyConnectorItem:
+      allOf:
+        - $ref: '#/components/schemas/LocationConnectorItem'
+        - type: object
+          required: [location_id, location_name]
+          properties:
+            location_id:
+              type: string
+              format: uuid
+            location_name:
+              type: string
+
+    ConnectorErrorSummaryItem:
+      type: object
+      required: [name, status_message]
+      properties:
+        name: { type: string }
+        status_message: { type: string }
+
+    LocationConnectorListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/LocationConnectorItem'
+        pagination:
+          $ref: '#/components/schemas/PaginationDTO'
+
+    CompanyConnectorListResponse:
+      type: object
+      required: [data, errors, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CompanyConnectorItem'
+        errors:
+          type: array
+          description: All connectors in error state across the entire company, regardless of pagination.
+          items:
+            $ref: '#/components/schemas/ConnectorErrorSummaryItem'
+        pagination:
+          $ref: '#/components/schemas/PaginationDTO'
+
+    # -- Company Users -----------------------------------------------------
+    UpdateCompanyUserRequest:
+      type: object
+      description: Partial update (PATCH). All fields optional.
+      properties:
+        first_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        last_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        phone_number:
+          type: string
+          maxLength: 50
+        role:
+          type: string
+          enum: [customer_admin, location_admin, frontline_user]
+        location_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        department:
+          type: string
+          maxLength: 255
+          description: Free-text organizational department
+
+    CompanyUserResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            email: { type: string, format: email }
+            first_name: { type: string }
+            last_name: { type: string }
+            display_name: { type: string }
+            phone_number: { type: string }
+            avatar_url: { type: string }
+            department: { type: string }
+            status: { type: string }
+            role: { type: string }
+
+    # -- Products ----------------------------------------------------------
+    Product:
+      type: object
+      required: [key, name]
+      properties:
+        key:
+          type: string
+          description: Product identifier key
+        name:
+          type: string
+          description: Product display name
+
+    ProductListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Product'

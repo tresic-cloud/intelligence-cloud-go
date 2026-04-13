@@ -1,0 +1,32 @@
+# golangci-lint configuration (v1 schema)
+# See https://golangci-lint.run/usage/configuration/
+#
+# Enables linters required by the project quality bar (FR-019, FR-022,
+# constitution VI/VII). The revive "exported" rule enforces GoDoc on
+# every exported symbol, satisfying FR-019 and constitution VII.
+
+run:
+  go: "1.22"
+  timeout: 5m
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - gosimple
+    - ineffassign
+    - misspell
+    - revive
+    - gosec
+
+linters-settings:
+  revive:
+    rules:
+      - name: exported
+        severity: warning
+        arguments:
+          - "checkPrivateReceivers"
+          - "sayRepetitiveInsteadOfStutters"

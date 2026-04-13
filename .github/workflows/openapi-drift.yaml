@@ -1,0 +1,65 @@
+name: OpenAPI Drift Detection
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # Daily at 06:00 UTC
+  workflow_dispatch: {} # Allow manual trigger
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  detect-drift:
+    name: Check for OpenAPI spec drift
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+
+      - name: Fetch upstream OpenAPI spec
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api \
+            -H "Accept: application/vnd.github.raw+json" \
+            "/repos/tresic-cloud/intelligence-cloud/contents/backend/docs/api/openapi.yaml?ref=main" \
+            > /tmp/upstream-openapi.yaml
+
+      - name: Compare specs
+        id: diff
+        run: |
+          if diff -q testdata/openapi.yaml /tmp/upstream-openapi.yaml > /dev/null 2>&1; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update local spec
+        if: steps.diff.outputs.changed == 'true'
+        run: cp /tmp/upstream-openapi.yaml testdata/openapi.yaml
+
+      - name: Create or update drift PR
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: openapi-drift-${{ github.run_id }}
+          delete-branch: true
+          title: "chore: update OpenAPI spec from upstream"
+          body: |
+            The upstream OpenAPI spec at `intelligence-cloud/main/backend/docs/api/openapi.yaml`
+            has changed. This PR updates `testdata/openapi.yaml` to match.
+
+            **Review required** -- this PR is never auto-merged. Verify that the
+            generated client code still compiles and tests pass after updating
+            the spec:
+
+            ```sh
+            make codegen
+            make test
+            ```
+          labels: |
+            openapi-drift
+            automated
+          commit-message: "chore: update OpenAPI spec from upstream"
