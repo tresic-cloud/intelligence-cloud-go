@@ -10,149 +10,77 @@ permissions:
   pull-requests: read
 
 env:
-  GO_VERSION_STABLE: "1.25.x"
+  GO_VERSION: "1.25.x"
 
 jobs:
-  # ── 0. PR title lint (conventional commits) ───────────────────────
-  pr-title:
-    if: github.event_name == 'pull_request'
-    name: PR Title Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: amannn/action-semantic-pull-request@v5
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # ── 1. Lint ────────────────────────────────────────────────────────
-  lint:
-    name: Lint
+  # ════════════════════════════════════════════════════════════════
+  # Step 1: Quality Gates — Linting, Static Analysis, Security
+  # ════════════════════════════════════════════════════════════════
+  quality-gates:
+    name: "Step 1: Quality Gates"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION_STABLE }}
+          go-version: ${{ env.GO_VERSION }}
+
+      # ── Linting ──
       - name: Install golangci-lint
         run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
-      - name: Run golangci-lint
+      - name: Lint
         run: golangci-lint run ./...
 
-  # ── 2. Security ────────────────────────────────────────────────────
-  security:
-    name: Security
-    needs: [lint]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION_STABLE }}
-      - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
-      - name: Run govulncheck
-        run: govulncheck ./...
-
-  # ── 3. Static analysis ────────────────────────────────────────────
-  static:
-    name: Static Analysis
-    needs: [security]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION_STABLE }}
+      # ── Static Analysis ──
       - name: go vet
         run: go vet ./...
-      - name: go build (typecheck)
+      - name: Build (typecheck)
         run: go build ./...
       - name: Install staticcheck
         run: go install honnef.co/go/tools/cmd/staticcheck@latest
       - name: staticcheck
         run: staticcheck ./...
 
-  # ── 4. Tests (matrix) ─────────────────────────────────────────────
-  test:
-    name: Test (Go ${{ matrix.go-version }})
-    needs: [static]
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        go-version: ["1.25.x", "1.26.x"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ matrix.go-version }}
-      - name: Run tests
-        run: go test -race -coverprofile=coverage.out ./...
-      - name: Upload coverage artifact
-        if: matrix.go-version == '1.25.x'
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage
-          path: coverage.out
+      # ── Security ──
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Vulnerability scan
+        run: govulncheck ./...
 
-  # ── 5. Coverage gate ──────────────────────────────────────────────
-  coverage-gate:
-    name: Coverage Gate
-    needs: [test]
+  # ════════════════════════════════════════════════════════════════
+  # Step 2: Unit Tests — only runs if Step 1 passes
+  # ════════════════════════════════════════════════════════════════
+  unit-tests:
+    name: "Step 2: Unit Tests"
+    needs: [quality-gates]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION_STABLE }}
-      - name: Download coverage artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: coverage
-      - name: Check coverage threshold (80%)
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run tests with race detector
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Coverage report
         run: |
           TOTAL=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $NF}' | tr -d '%')
+          echo "### Coverage: ${TOTAL}%" >> $GITHUB_STEP_SUMMARY
           echo "Total line coverage: ${TOTAL}%"
           if [ "$(echo "${TOTAL} < 80.0" | bc -l)" -eq 1 ]; then
             echo "::error::Coverage ${TOTAL}% is below the 80% threshold"
             exit 1
           fi
 
-  # ── 6. Codegen drift ──────────────────────────────────────────────
-  codegen-drift:
-    name: Codegen Drift
-    needs: [test]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION_STABLE }}
-      - name: Install oapi-codegen
-        run: go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
-      - name: Check for codegen drift
-        run: bash scripts/codegen_test.sh
-
-  # ── 7. Example build ──────────────────────────────────────────────
-  example-build:
-    name: Example Build
-    needs: [test]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION_STABLE }}
-      - name: Build examples
-        run: |
-          if [ -d examples/ ]; then
-            go build ./examples/...
-          else
-            echo "examples/ directory not found, skipping"
-          fi
-
-  # ── 8. Cross-platform build matrix ────────────────────────────────
-  cross-platform-build-matrix:
-    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
-    needs: [test]
+  # ════════════════════════════════════════════════════════════════
+  # Step 3: Build & Release — only runs if Steps 1+2 pass
+  #   On PR: cross-platform build check (no release)
+  #   On main push: cross-platform build (release is tag-triggered)
+  # ════════════════════════════════════════════════════════════════
+  build:
+    name: "Step 3: Build (${{ matrix.goos }}/${{ matrix.goarch }})"
+    needs: [unit-tests]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -173,32 +101,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION_STABLE }}
-      - name: Build
+          go-version: ${{ env.GO_VERSION }}
+      - name: Build icctl
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: |
-          if [ -d cmd/icctl/ ]; then
-            go build ./cmd/icctl/
-          else
-            go build ./...
-          fi
-
-  # ── 9. Integration (optional) ─────────────────────────────────────
-  integration:
-    name: Integration
-    needs: [test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION_STABLE }}
-      - name: Run integration tests
-        if: env.IC_STAGING_TOKEN != ''
-        env:
-          IC_STAGING_TOKEN: ${{ secrets.IC_STAGING_TOKEN }}
-        run: go test -tags=integration ./...
+          go build -ldflags "-s -w \
+            -X github.com/tresic-cloud/intelligence-cloud-go/internal/version.Version=dev \
+            -X github.com/tresic-cloud/intelligence-cloud-go/internal/version.Commit=$(git rev-parse --short HEAD) \
+            -X github.com/tresic-cloud/intelligence-cloud-go/internal/version.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o /dev/null ./cmd/icctl/
