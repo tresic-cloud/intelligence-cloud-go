@@ -1,6 +1,3 @@
-// Package intelligencecloud provides a typed Go client for the Intelligence
-// Cloud API. It exposes resource services, typed errors, retry policy, and
-// per-call/per-list options.
 package intelligencecloud
 
 import (
