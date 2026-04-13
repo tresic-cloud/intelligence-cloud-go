@@ -7,11 +7,22 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   GO_VERSION_STABLE: "1.25.x"
 
 jobs:
+  # ── 0. PR title lint (conventional commits) ───────────────────────
+  pr-title:
+    if: github.event_name == 'pull_request'
+    name: PR Title Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # ── 1. Lint ────────────────────────────────────────────────────────
   lint:
     name: Lint
