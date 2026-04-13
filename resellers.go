@@ -27,8 +27,7 @@ type PatchResellerRequest = generated.PatchResellerRequest
 // ResellerService.Deactivate. Reason is required.
 type DeactivateResellerRequest = generated.DeactivateResellerRequest
 
-// AuditLogEntry represents a single audit log entry.
-type AuditLogEntry = generated.AuditLogEntry
+// AuditLogEntry type alias is declared in auditlogs.go.
 
 // List returns a paginated iterator over all resellers. Use ListOption
 // values such as WithPageSize and WithFilter to control pagination and
