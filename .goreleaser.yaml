@@ -1,0 +1,34 @@
+version: 2
+
+builds:
+  - id: icctl
+    main: ./cmd/icctl
+    binary: icctl
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    env: [CGO_ENABLED=0]
+    ldflags:
+      - -s -w
+      - -X github.com/tresic-cloud/intelligence-cloud-go/internal/version.Version={{.Version}}
+      - -X github.com/tresic-cloud/intelligence-cloud-go/internal/version.Commit={{.FullCommit}}
+      - -X github.com/tresic-cloud/intelligence-cloud-go/internal/version.Date={{.CommitDate}}
+
+archives:
+  - id: icctl
+    builds: [icctl]
+    name_template: "icctl_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  use: github-native
+
+release:
+  github:
+    owner: tresic-cloud
+    name: intelligence-cloud-go

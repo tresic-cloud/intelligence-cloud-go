@@ -1,0 +1,21 @@
+{
+  "packages": {
+    ".": {
+      "release-type": "go",
+      "package-name": "intelligence-cloud-go",
+      "bump-minor-pre-major": true,
+      "include-v-in-tag": true,
+      "changelog-sections": [
+        { "type": "feat", "section": "Features" },
+        { "type": "fix", "section": "Bug Fixes" },
+        { "type": "docs", "section": "Documentation" },
+        { "type": "chore", "section": "Miscellaneous" },
+        { "type": "refactor", "section": "Code Refactoring" },
+        { "type": "perf", "section": "Performance" },
+        { "type": "test", "section": "Tests" },
+        { "type": "ci", "section": "CI/CD" },
+        { "type": "build", "section": "Build System" }
+      ]
+    }
+  }
+}
