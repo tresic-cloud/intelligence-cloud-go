@@ -8,6 +8,16 @@ set -euo pipefail
 # Produces:
 #   internal/generated/types.gen.go
 #   internal/generated/client.gen.go
+#
+# KNOWN ISSUE (2026-04-13): The pinned canonical OpenAPI document is OpenAPI
+# 3.1, which oapi-codegen v2.6.0 does not yet fully support
+# (https://github.com/oapi-codegen/oapi-codegen/issues/373). Real codegen
+# emits a name collision between the schema-level `LoginResponse` type and
+# the WithResponses wrapper of the same name. As a stop-gap the generated
+# files in this repo are hand-curated to match what oapi-codegen v2 would
+# produce once 3.1 support lands (or once IDB-1354 downgrades the canonical
+# spec to 3.0). Run this script when either condition is true; if the diff
+# is clean, drop this comment.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SPEC="${REPO_ROOT}/testdata/openapi.yaml"
