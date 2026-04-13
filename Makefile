@@ -57,10 +57,10 @@ release-snapshot:
 	@command -v goreleaser >/dev/null 2>&1 || { echo "goreleaser not found. Install: go install github.com/goreleaser/goreleaser/v2@latest"; exit 1; }
 	goreleaser release --snapshot --clean
 
-## docs: generate CLI reference from cobra (placeholder)
+## docs: generate CLI reference from cobra
 .PHONY: docs
 docs:
-	@echo "CLI not available yet"
+	@if [ -f cmd/icctl/main.go ]; then go run ./cmd/icctl -- --generate-docs docs/ 2>/dev/null || echo "CLI doc gen not yet supported"; else echo "CLI binary not available yet"; fi
 
 ## clean: remove build artifacts and coverage files
 .PHONY: clean
