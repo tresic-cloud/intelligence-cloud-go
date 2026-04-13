@@ -90,16 +90,6 @@ func fastRetryPolicy() ic.RetryPolicy {
 	}
 }
 
-// newTestTransport creates a Transport with a test server as the base.
-func newTestTransport(handler http.Handler, provider auth.CredentialProvider, policy ic.RetryPolicy) (*Transport, *httptest.Server) {
-	srv := httptest.NewServer(handler)
-	return &Transport{
-		Base:     &http.Transport{},
-		Provider: provider,
-		Policy:   policy,
-	}, srv
-}
-
 // newRequest creates a request to the given URL.
 func newRequest(t *testing.T, method, url string, body io.Reader) *http.Request {
 	t.Helper()

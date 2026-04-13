@@ -18,6 +18,7 @@ import (
 	ic "github.com/tresic-cloud/intelligence-cloud-go"
 	"github.com/tresic-cloud/intelligence-cloud-go/auth"
 	"github.com/tresic-cloud/intelligence-cloud-go/internal/version"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -69,7 +70,7 @@ func (t *Transport) base() http.RoundTripper {
 func (t *Transport) tracer() trace.Tracer {
 	tp := t.TracerProv
 	if tp == nil {
-		tp = trace.NewNoopTracerProvider()
+		tp = noop.NewTracerProvider()
 	}
 	return tp.Tracer("github.com/tresic-cloud/intelligence-cloud-go")
 }

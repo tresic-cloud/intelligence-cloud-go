@@ -59,10 +59,8 @@ func TestSentinelErrors_Messages(t *testing.T) {
 func TestAPIError_Interface(t *testing.T) {
 	// Verify the APIError interface has the expected methods by compiling
 	// a type assertion against a known concrete type.
-	var ae APIError
-
 	// AuthenticationError must satisfy APIError.
-	ae = NewAuthenticationError(401, "auth_failed", "bad token", "req-1", "GetMe")
+	var ae APIError = NewAuthenticationError(401, "auth_failed", "bad token", "req-1", "GetMe")
 	if ae.Status() != 401 {
 		t.Errorf("Status() = %d, want 401", ae.Status())
 	}

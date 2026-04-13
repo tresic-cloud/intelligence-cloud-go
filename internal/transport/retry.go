@@ -103,14 +103,14 @@ func computeBackoff(policy ic.RetryPolicy, attempt int) time.Duration {
 		if delay <= 0 {
 			return 0
 		}
-		return time.Duration(rand.Int64N(int64(delay)))
+		return time.Duration(rand.Int64N(int64(delay))) //nolint:gosec // G404: math/rand is intentional for jitter
 	case ic.EqualJitter:
 		// Random value in [delay/2, delay)
 		half := delay / 2
 		if half <= 0 {
 			return 0
 		}
-		jitter := time.Duration(rand.Int64N(int64(half)))
+		jitter := time.Duration(rand.Int64N(int64(half))) //nolint:gosec // G404: math/rand is intentional for jitter
 		return half + jitter
 	default: // NoJitter
 		return delay

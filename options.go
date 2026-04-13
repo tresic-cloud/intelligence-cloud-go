@@ -82,7 +82,7 @@ func (o extraHeaderOption) applyCall(c *callConfig) {
 // because the SDK manages that header via the CredentialProvider.
 func WithExtraHeader(name, value string) CallOption {
 	if strings.EqualFold(name, "authorization") {
-		panic(fmt.Sprintf("intelligencecloud: WithExtraHeader: setting the Authorization header is forbidden; use a CredentialProvider instead"))
+		panic("intelligencecloud: WithExtraHeader: setting the Authorization header is forbidden; use a CredentialProvider instead")
 	}
 	return extraHeaderOption{name: name, value: value}
 }

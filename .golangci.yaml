@@ -1,12 +1,6 @@
-# golangci-lint configuration (v1 schema)
-# See https://golangci-lint.run/usage/configuration/
-#
-# Enables linters required by the project quality bar (FR-019, FR-022,
-# constitution VI/VII). The revive "exported" rule enforces GoDoc on
-# every exported symbol, satisfying FR-019 and constitution VII.
-
+# golangci-lint v1 configuration
 run:
-  go: "1.22"
+  go: "1.25"
   timeout: 5m
 
 linters:
@@ -30,3 +24,22 @@ linters-settings:
         arguments:
           - "checkPrivateReceivers"
           - "sayRepetitiveInsteadOfStutters"
+  errcheck:
+    exclude-functions:
+      - (io.Closer).Close
+      - (net/http.ResponseWriter).Write
+      - fmt.Fprint
+      - fmt.Fprintf
+      - fmt.Fprintln
+      - io.Copy
+      - os.Remove
+      - os.Unsetenv
+
+issues:
+  exclude-rules:
+    # Test files: disable gosec (test fixtures with fake creds)
+    # and errcheck (intentional ignores in httptest handlers)
+    - path: _test\.go
+      linters:
+        - gosec
+        - errcheck
