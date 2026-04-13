@@ -95,6 +95,13 @@ func NewRootCmd(profileLoader ProfileLoader, secretLoader SecretLoader) *cobra.C
 	// Add subcommands.
 	rootCmd.AddCommand(NewVersionCmd())
 	rootCmd.AddCommand(NewProfileCmd(profileLoader, secretLoader))
+	rootCmd.AddCommand(NewProductsCmd())
+	rootCmd.AddCommand(NewConnectorsCmd())
+	rootCmd.AddCommand(NewUsersCmd())
+	rootCmd.AddCommand(NewAuditLogsCmd())
+	rootCmd.AddCommand(NewCompaniesCmd())
+	rootCmd.AddCommand(NewLocationsCmd())
+	rootCmd.AddCommand(NewVerticalsCmd())
 	RegisterCompletionCmd(rootCmd)
 
 	return rootCmd
