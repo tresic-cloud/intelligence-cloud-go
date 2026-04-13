@@ -1,0 +1,13 @@
+package: generated
+generate:
+  models: false
+  chi-server: false
+  client: true
+  echo-server: false
+  gin-server: false
+  gorilla-server: false
+  strict-server: false
+  embedded-spec: false
+output: internal/generated/client.gen.go
+output-options:
+  skip-prune: true
