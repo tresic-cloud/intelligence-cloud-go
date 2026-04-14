@@ -47,21 +47,9 @@ type Client struct {
 	// Populated by resource-wrapper tasks in Wave 2.
 	Resellers *ResellerService
 
-	// Companies provides CRUD and lifecycle operations for company resources.
-	// Populated by resource-wrapper tasks in Wave 2.
-	Companies *CompanyService
-
-	// Locations provides CRUD and lifecycle operations for location resources.
-	// Populated by resource-wrapper tasks in Wave 2.
-	Locations *LocationService
-
 	// Products provides CRUD and lifecycle operations for product resources.
 	// Populated by resource-wrapper tasks in Wave 2.
 	Products *ProductService
-
-	// Verticals provides CRUD and lifecycle operations for vertical resources.
-	// Populated by resource-wrapper tasks in Wave 2.
-	Verticals *VerticalService
 
 	// Connectors provides CRUD and lifecycle operations for connector resources.
 	// Populated by resource-wrapper tasks in Wave 2.
@@ -93,21 +81,9 @@ type MeService struct{ client *Client }
 // resources. Methods are added by resource-wrapper tasks in Wave 2.
 type ResellerService struct{ client *Client }
 
-// CompanyService provides CRUD and lifecycle operations for company
-// resources. Methods are added by resource-wrapper tasks in Wave 2.
-type CompanyService struct{ client *Client }
-
-// LocationService provides CRUD and lifecycle operations for location
-// resources. Methods are added by resource-wrapper tasks in Wave 2.
-type LocationService struct{ client *Client }
-
 // ProductService provides CRUD and lifecycle operations for product
 // resources. Methods are added by resource-wrapper tasks in Wave 2.
 type ProductService struct{ client *Client }
-
-// VerticalService provides CRUD and lifecycle operations for vertical
-// resources. Methods are added by resource-wrapper tasks in Wave 2.
-type VerticalService struct{ client *Client }
 
 // ConnectorService provides CRUD and lifecycle operations for connector
 // resources. Methods are added by resource-wrapper tasks in Wave 2.
@@ -272,10 +248,7 @@ func NewClient(baseURL string, provider auth.CredentialProvider, opts ...ClientO
 	// Wire resource service stubs.
 	c.Me = &MeService{client: c}
 	c.Resellers = &ResellerService{client: c}
-	c.Companies = &CompanyService{client: c}
-	c.Locations = &LocationService{client: c}
 	c.Products = &ProductService{client: c}
-	c.Verticals = &VerticalService{client: c}
 	c.Connectors = &ConnectorService{client: c}
 	c.AuditLogs = &AuditLogService{client: c}
 	c.Users = &UserService{client: c}

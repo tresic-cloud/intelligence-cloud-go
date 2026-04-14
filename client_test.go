@@ -242,17 +242,8 @@ func TestNewClient_ResourceServiceFields_NotNil(t *testing.T) {
 	if c.Resellers == nil {
 		t.Error("Resellers is nil")
 	}
-	if c.Companies == nil {
-		t.Error("Companies is nil")
-	}
-	if c.Locations == nil {
-		t.Error("Locations is nil")
-	}
 	if c.Products == nil {
 		t.Error("Products is nil")
-	}
-	if c.Verticals == nil {
-		t.Error("Verticals is nil")
 	}
 	if c.Connectors == nil {
 		t.Error("Connectors is nil")
@@ -438,10 +429,7 @@ func TestClient_ConcurrentAccess(t *testing.T) {
 			_ = c.propagator
 			_ = c.Me
 			_ = c.Resellers
-			_ = c.Companies
-			_ = c.Locations
 			_ = c.Products
-			_ = c.Verticals
 			_ = c.Connectors
 			_ = c.AuditLogs
 			_ = c.Users
